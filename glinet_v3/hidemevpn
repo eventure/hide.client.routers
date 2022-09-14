@@ -1,0 +1,735 @@
+#!/bin/sh
+
+. /lib/functions.sh
+. /usr/share/libubox/jshn.sh
+
+is_glinet_v3_router()
+{
+	cat /etc/glversion 2> /dev/null |
+		tr -d \\n |
+		grep -q '^3\.[0-9][0-9][0-9]$'
+	return $?
+}
+
+req_api()
+{
+	[ -z "$1" ] && return 3
+
+	result=$(curl \
+		-sf \
+		--pinnedpubkey 'sha256//wFV2S+sEzTsi5WsueDIqm7xgu398q4prPQ/4EHARDLc=' \
+		https://api.hide.me/$1)
+
+	ret=$?
+
+	echo "$result"
+
+	return $ret
+}
+
+req()
+{
+	certtemp=$(mktemp -t hidemevpn.XXXXXX)
+
+	cat <<-EOF > $certtemp
+-----BEGIN CERTIFICATE-----
+MIIKJDCCBgygAwIBAgIQVc9ekKx5ZIkHcGchmaaVEzANBgkqhkiG9w0BAQ0FADCB
+kTELMAkGA1UEBhMCTVkxHDAaBgNVBAgME1dpbGF5YWggUGVyc2VrdXR1YW4xDzAN
+BgNVBAcMBkxhYnVhbjEZMBcGA1UECgwQZVZlbnR1cmUgTGltaXRlZDEeMBwGA1UE
+CwwVQ2VydGlmaWNhdGUgQXV0aG9yaXR5MRgwFgYDVQQDDA9IaWRlLk1lIFJvb3Qg
+Q0EwHhcNMTYwMTE3MjExMDI0WhcNNDYwMTA5MjExMDI0WjCBkTELMAkGA1UEBhMC
+TVkxHDAaBgNVBAgME1dpbGF5YWggUGVyc2VrdXR1YW4xDzANBgNVBAcMBkxhYnVh
+bjEZMBcGA1UECgwQZVZlbnR1cmUgTGltaXRlZDEeMBwGA1UECwwVQ2VydGlmaWNh
+dGUgQXV0aG9yaXR5MRgwFgYDVQQDDA9IaWRlLk1lIFJvb3QgQ0EwggQiMA0GCSqG
+SIb3DQEBAQUAA4IEDwAwggQKAoIEAQDX8zVTP6FQ4gJ+4e06bxvxifNHK8ht0RZn
+zCNrrwkekpB4ojXDghNfS38oK80RfygC8LXN7SnLv+0xw5dRZ3QVIZJnd/DtX2EF
+ZVxMyccJkLj8IEZv4Yx7zPnKI9EcQwo64O7npz28JZAGwexmK1W7ohm9VaAAtUPY
+6Ej7k/wsJi2d5BeHzYRrfJX3nEft8hbotwsFLPsngDciS3yE2B5zH/PJOZ5uzr/5
+djAbeFktfHR6ywbxE2CYjz2pVUfqvzjzwNj5BJPp3K5iTL/oL1xrAkQ5xSPtHbP0
+ZCMmR//PC73cqkI6bAw8YAjvq0CG7wSC3rCfzgz3RGGPHMVUmB+GGu1KZoGisexm
+9Y3ovmgubM+eE23aMBObf6tcRp1hSv7+EenlqAbyqQ5JqltWgsjEcV6THRKFmlSS
+CP84kZK+nLnoto6MEG8sK9d02+iYWPQbVQ9X7O6pMHgVj7vnOLuW6i+hKT/pcsnU
+8yhu2495Q07NDAAeX12dMbHhfLAs+DMtxjkj9SxejCS3Gi/XxON0E1NVVNEcl4yu
+TODIJVfh/+uDdUn6v8tP7XmIFlKlfyQzfxND/VlRAep1Tt4i04KAhW0SG5/qaXoP
+YROoP7eA0igKI5PxGbUZw/ym0i+1iXHR5XqfavZRM6gpOlDH2D9Mo64JfJTWT8J0
+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
+K127pRfgZn0=
+-----END CERTIFICATE-----
+EOF
+
+	[ -n "$5" ] && ip route add $5
+
+	result=$(curl \
+		-sf \
+		--cacert $certtemp \
+		-X POST \
+		--data-binary "$3" \
+		${4:+--resolve $1:432:$4} \
+		https://$1:432/v1.0.0/$2)
+
+	ret=$?
+
+	rm -f $certtemp
+
+	[ -n "$5" ] && ip route del $5
+
+	echo "$result"
+
+	return $ret
+}
+
+req_accesstoken()
+{
+	[ -z "$1" -o -z "$2" ] && return 1
+
+	hostname=$1
+	host=$(echo $hostname | cut -d. -f1)
+
+	json_init
+	json_add_string domain "hide.me"
+	json_add_string host "$host"
+
+	if [ -z "$3" ]
+	then
+		accesstoken="$2"
+		json_add_string accessToken "$accesstoken"
+	else
+		username="$2"
+		password="$3"
+		json_add_string username "$username"
+		json_add_string password "$password"
+	fi
+
+	token=$(req $hostname accessToken "$(json_dump)" "$4" "$5")
+
+	ret=$?
+
+	echo $token | tr -d \"
+
+	return $ret
+}
+
+store_accesstoken()
+{
+	token="$1"
+
+	[ ! -f /etc/config/hideme ] && touch /etc/config/hideme
+
+	uci -q batch <<-EOF
+		set hideme.vpn=hideme
+		set hideme.vpn.accesstoken="$token"
+EOF
+
+	uci -q commit hideme
+}
+
+req_connect()
+{
+	[ -z "$1" -o -z "$2" -o -z "$3" ] && return 1
+
+	hostname=$1
+	host=$(echo $hostname | cut -d. -f1)
+
+	accesstoken=$2
+	publickey=$3
+
+	json_init
+	json_add_string domain "hide.me"
+	json_add_string host "$host"
+	json_add_string accessToken "$accesstoken"
+	json_add_string publicKey "$publickey"
+
+	result=$(req $hostname connect "$(json_dump)" "$4" "$5")
+
+	ret=$?
+
+	echo $result
+
+	return $ret
+}
+
+proxy_func()
+{
+	config_get main_server $1 "main_server"
+	config_get enable $1 "enable"
+}
+
+peers_func()
+{
+	local name
+	local hostname
+	local host
+	local domain
+	local ipaddr
+
+	peer=$1
+
+	config_get name $peer name
+
+	[ "$name" != "$main_server" ] && continue
+
+	config_get hostname $peer hostname
+
+	if [ -z "$hostname" ]
+	then
+		config_get endpoint $peer end_point
+		hostname=$(echo $endpoint | cut -d: -f1)
+
+		if [ -n "$hostname" ]
+		then
+			uci -q set wireguard.$peer.hostname="$hostname"
+			uci -q commit wireguard
+		fi
+	fi
+
+	[ -z "$hostname" ] && continue
+
+	host=$(echo $hostname | cut -d. -f1)
+	domain=$(echo $hostname | cut -d. -f2-)
+
+	[ "$domain" != "hideservers.net" ] && continue
+
+	accesstoken=$(uci_get hideme vpn accesstoken)
+
+	[ -z "$accesstoken" ] && continue
+
+	privatekey=$(wg genkey)
+	publickey=$(echo $privatekey | wg pubkey)
+
+	[ -z "$privatekey" ] && continue
+	[ -z "$publickey" ] && continue
+
+	if [ $downup -eq 1 ]
+	then
+		if [ -f "/tmp/resolv.conf.vpn" ]
+		then
+			rm -rf /tmp/resolv.conf.vpn
+			uci set dhcp.@dnsmasq[0].resolvfile='/tmp/resolv.conf.auto'
+			uci commit dhcp
+			/etc/init.d/dnsmasq restart
+		fi
+
+		ipaddr=$(resolveip "$hostname")
+
+		. /etc/init.d/wireguard
+		get_wan_iface_and_gateway
+
+		route="$ipaddr via $gw dev $interface"
+	fi
+
+	result=$(req_connect "$hostname" "$accesstoken" "$publickey" "$ipaddr" "$route")
+
+	ret=$?
+
+	if [ $ret -ne 0 ]
+	then
+		logger -t hidemevpn "cannot connect: Error code: $ret"
+
+		[ $ret -ne 22 ] && continue
+
+		token=$(req_accesstoken "$hostname" "$accesstoken" "" "$ipaddr" "$route")
+
+		ret=$?
+
+		if [ "$ret" != "0" -o -z "$token" ]
+		then
+			logger -t hidemevpn "cannot obtain access token! error code: $ret"
+			continue
+		fi
+
+		store_accesstoken "$token"
+
+		logger -t hidemevpn "new access token obtained"
+
+		result=$(req_connect "$hostname" "$token" "$publickey" "$ipaddr" "$route")
+
+		ret=$?
+
+		if [ $ret -ne 0 ]
+		then
+			logger -t hidemevpn "cannot connect! error code: $ret"
+			continue
+		fi
+	fi
+
+	json_load "$result"
+
+	json_get_var publickey publicKey
+	json_get_var presharedkey presharedKey
+	json_get_var persistentkeepalive persistentKeepalive
+	json_get_var sessiontoken sessionToken
+
+	json_select endpoint
+	json_get_var serveraddress IP
+	json_get_var serverport Port
+	json_select ..
+
+	json_select allowedIps
+	json_get_var ipv4 1
+	json_get_var ipv6 2
+	json_select ..
+
+	json_select DNS
+	json_get_var dnsv4 1
+	json_get_var dnsv6 2
+	json_select ..
+
+	# normalize to seconds
+	persistentkeepalive=${persistentkeepalive%%000000000}
+
+	[ -z "$publickey" ] && continue
+	[ -z "$presharedkey" ] && continue
+	[ -z "persistenkeepalive" ] && continue
+	[ -z "sessiontoken" ] && continue
+	[ -z "serveraddress" ] && continue
+	[ -z "serverport" ] && continue
+	[ -z "$ipv4" ] && continue
+	[ -z "$ipv6" ] && continue
+	[ -z "$dnsv4" ] && continue
+	[ -z "$dnsv6" ] && continue
+
+	uci -q batch <<-EOF
+		set wireguard.$peer.private_key="$privatekey"
+		set wireguard.$peer.public_key="$publickey"
+		set wireguard.$peer.preshared_key="$presharedkey"
+		set wireguard.$peer.end_point="$serveraddress:$serverport"
+		set wireguard.$peer.persistent_keepalive="$persistentkeepalive"
+		set wireguard.$peer.address="$ipv4,$ipv6"
+		set wireguard.$peer.listen_port="0"
+		set wireguard.$peer.allowed_ips='0.0.0.0/0,::/0'
+		set wireguard.$peer.dns="$dnsv4,$dnsv6"
+		set hideme.vpn.lastpeer="$publickey"
+EOF
+
+	uci -q commit wireguard
+	uci -q commit hideme
+
+	logger -t hidemevpn "session token: $sessiontoken"
+
+	connectdone=1
+}
+
+cmd_connect()
+{
+	local main_server
+	local enable
+	local connectdone=0
+	local downup=0
+
+	config_load wireguard
+	config_foreach proxy_func proxy
+
+	[ "$enable" != "1" -o "$main_server" == "" ] && exit 1
+
+	[ "$1" = "downup" ] && downup=1
+
+	config_foreach peers_func peers
+
+	if [ "$connectdone" = 0 ]
+	then
+		return 1
+	fi
+}
+
+patch_wireguard()
+{
+	wgf="$1"
+
+	[ ! -f $wgf ] && return 1
+
+	grep -qs '/usr/sbin/hidemevpn' $wgf
+
+	ret=$?
+
+	# try to clear patch first
+
+	[ $ret -ne 1 ] && sed -i '/\/usr\/sbin\/hidemevpn/d' /etc/init.d/wireguard
+
+	grep -qs '/usr/sbin/hidemevpn' $wgf
+
+	ret=$?
+
+	[ $ret -ne 1 ] && return 0
+
+	sed -i ':a;N;$!ba;s~\(\ninit_config()\n{\n\)~\1\t/usr/sbin/hidemevpn connect "$action"; [ $? -ne 0 ] \&\& return\n~' $wgf
+}
+
+cmd_reinstall()
+{
+	patch_wireguard /etc/init.d/wireguard
+
+	[ $? -eq 1 ] && echo "ERROR: No wireguard service. Hide.me VPN won't work!"
+
+	ln -fs /usr/sbin/hidemevpn /usr/libexec/glcrond/hidemevpn_monitor
+	ln -fs /usr/sbin/hidemevpn /usr/libexec/glcrond/hidemevpn_update
+
+	ubus -S call glcrond destroy '{"name":"hidemevpn_monitor"}' > /dev/null
+	ubus -S call glcrond destroy '{"name":"hidemevpn_update"}' > /dev/null
+
+	ubus -S call glcrond create '{"name":"hidemevpn_monitor","interval":10}'
+	ubus -S call glcrond create '{"name":"hidemevpn_update","interval":86400}'
+}
+
+download_and_install()
+{
+	script=$(mktemp -t hidemevpn.XXXXXX)
+
+	curl \
+		-sfo $script \
+		https://raw.githubusercontent.com/eventure/hide.client.openwrt/master/glinet_v3/hidemevpn
+
+	ret=$?
+	[ $ret -ne 0 ] && return $ret
+
+	mv -f $script /usr/sbin/hidemevpn
+	chmod +x /usr/sbin/hidemevpn
+}
+
+cmd_install()
+{
+	echo "Downloading and installing latest version..."
+	download_and_install
+
+	ret=$?
+	if [ $ret -ne 0 ]
+	then
+		echo "ERROR occured while downloading. Error code: $ret"
+		exit $ret
+	fi
+
+	echo "Patching system..."
+	cmd_reinstall
+
+	echo "Fetching servers..."
+	cmd_update
+
+	accesstoken=$(uci_get hideme vpn accesstoken)
+
+	if [ -n "$accesstoken" ]
+	then
+		echo "Already logged in."
+		echo "If needed relogin with: hidemevpn login"
+	else
+		echo "Login..."
+		cmd_login
+	fi
+
+	echo "Install complete!"
+}
+
+cmd_login()
+{
+	read -p "Username: " username < /dev/tty
+	read -p "Password: " -s password < /dev/tty
+	echo
+
+	if [ -z "$username" -o -z "$password" ]
+	then
+		echo "Username and password cannot be empty!"
+		echo "Please try again using command: hidemevpn login"
+		return 1
+	fi
+
+	defaultserver="any.hideservers.net"
+
+	read -p "Server (default: $defaultserver): " server < /dev/tty
+
+	[ -z "$server" ] && server="$defaultserver"
+
+	echo "Checking username and password and requesting access token"
+
+	token=$(req_accesstoken $server "$username" "$password")
+
+	ret=$?
+
+	if [ "$ret" != "0" -o -z "$token" ]
+	then
+		echo "Cannot obtain access token! Error code: $ret"
+		return $ret
+	fi
+
+	echo "Username validated and access token obtained!"
+
+	store_accesstoken "$token"
+}
+
+cmd_monitor()
+{
+	wg show all latest-handshakes |
+		while read interface publickey time
+		do
+			[ -z $time -o $time = 0 ] && continue
+
+			idle=$(($(date +%s)-$time))
+			[ $idle -lt 150 ] && continue
+
+			lastpeer=$(uci -q get hideme.vpn.lastpeer)
+			[ "$lastpeer" != "$publickey" ] && continue
+
+			logger -t hidemevpn "monitor: reload wireguard"
+
+			/etc/init.d/wireguard reload
+
+			break
+		done
+}
+
+servers_remove()
+{
+	uci -q show wireguard |
+		grep '^wireguard\.wg_peer_hideme_[0-9]\+=peers$' |
+		cut -d= -f1 |
+		sed 's~^~delete ~' |
+		uci -q batch
+
+	uci -q commit wireguard
+}
+
+servers_get()
+{
+	result=$(req_api v1/network/paid/en)
+
+	ret=$?
+
+	[ $ret -ne 0 ] && return $ret
+
+	echo '{"servers":'$result'}'
+
+	return $ret
+}
+
+process_server()
+{
+	json_select $2
+	json_get_var id id
+	json_get_var flag flag
+	json_get_var hostname hostname
+
+	[ -z "$id" -o -z "$flag" -o -z "$hostname" ] && return
+
+	host=$(echo $hostname | sed 's~-\(v[46]\|ds\)\.hideservers\.net$~~' | tr -- - _)
+
+	if [ "$3" = "child" ]
+	then
+		name="hideme_${flag}_$host"
+	else
+		name="hideme_$host"
+	fi
+
+	echo "$name $hostname $id"
+
+	json_is_a children array &&
+		json_for_each_item process_server children child
+
+	json_select ..
+}
+
+servers_process()
+{
+	json_load "$1"
+
+	json_for_each_item process_server servers |
+		sort
+}
+
+servers_add()
+{
+	echo "$1" |
+		while read name hostname id
+		do
+			echo "set wireguard.wg_peer_hideme_$id=peers"
+			echo "set wireguard.wg_peer_hideme_$id.name='$name'"
+			echo "set wireguard.wg_peer_hideme_$id.address='0.0.0.0'"
+			echo "set wireguard.wg_peer_hideme_$id.listen_port='11111'"
+			echo "set wireguard.wg_peer_hideme_$id.private_key='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='"
+			echo "set wireguard.wg_peer_hideme_$id.public_key='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='"
+			echo "set wireguard.wg_peer_hideme_$id.allowed_ips='0.0.0.0/0,::/0'"
+			echo "set wireguard.wg_peer_hideme_$id.persistent_keepalive='20'"
+			echo "set wireguard.wg_peer_hideme_$id.end_point='$hostname:432'"
+			echo "set wireguard.wg_peer_hideme_$id.hostname='$hostname'"
+		done |
+		uci -q batch
+
+	uci -q commit wireguard
+}
+
+servers_update_main()
+{
+	main_server=$(uci -q get wireguard.@proxy[0].main_server)
+
+	[ -z "$main_server" -o "$main_server" = "nil" ] && return
+
+	server=$(
+		uci -q show wireguard |
+			grep "^wireguard\.wg_peer_.*\.name='$main_server'$" |
+			cut -d= -f2- |
+			tr -d \'
+	)
+
+	[ "$server" == "$main_server" ] && return
+
+	uci -q set wireguard.@proxy[0].main_server='nil'
+	uci -q commit wireguard
+}
+
+cmd_update()
+{
+	result=$(servers_get)
+
+	ret=$?
+
+	if [ $ret -ne 0 ]
+	then
+		logger -t hidemevpn "update: ERROR: cannot fetch servers. error code: $ret"
+		return $ret
+	fi
+
+	list=$(servers_process "$result")
+
+	servers_remove
+
+	servers_add "$list"
+
+	servers_update_main
+
+	logger -t hidemevpn "update: servers updated"
+}
+
+nice_rm()
+{
+	[ -f "$1" -o -L "$1" ] && rm -f "$1"
+}
+
+is_connected()
+{
+	wg show all latest-handshakes | {
+		while read interface publickey time
+		do
+			lastpeer=$(uci -q get hideme.vpn.lastpeer)
+
+			[ "$lastpeer" != "$publickey" ] && continue
+
+			return 1
+		done
+	}
+}
+
+cmd_uninstall()
+{
+	if [ "$1" != "--yes-uninstall" ]
+	then
+		echo "WARNING: This will completely uninstall support for Hide.me VPN's WireGuard from this device."
+		echo "         Including settings, modifications and script itself."
+		echo "         To confirm uninstallation please rerun with \"hidemevpn uninstall --yes-uninstall\""
+		return 1
+	fi
+
+	is_connected
+	if [ $? -eq 1 ]
+	then
+		echo "Make sure that WireGuard connection to Hide.me is disconneted before trying to uninstall!"
+		return 1
+	fi
+
+	sed -i '/\/usr\/sbin\/hidemevpn/d' /etc/init.d/wireguard
+
+	ubus -S call glcrond destroy '{"name":"hidemevpn_monitor"}'
+	ubus -S call glcrond destroy '{"name":"hidemevpn_update"}'
+
+	nice_rm /usr/libexec/glcrond/hidemevpn_monitor
+	nice_rm /usr/libexec/glcrond/hidemevpn_update
+
+	servers_remove
+	servers_update_main
+
+	nice_rm /etc/config/hideme
+	nice_rm /usr/sbin/hidemevpn
+
+	echo "Uninstall complete!"
+}
+
+cmd_usage()
+{
+	cat <<-EOF
+hidemevpn v1.0 (2022-09-14)
+
+Hide.me VPN WireGuard support for GL.iNet devices with firmware v3
+
+usage: hidemevpn <command>
+
+commands:
+
+install - download and install newest version
+login - login and obtain access token
+uninstall - uninstall script
+update - update servers list
+
+EOF
+}
+
+name=$(basename "$0")
+
+case "$name" in
+	hidemevpn_monitor)
+		cmd_monitor
+		exit
+		;;
+	hidemevpn_update)
+		cmd_update
+		exit
+		;;
+esac
+
+if ! is_glinet_v3_router
+then
+	echo "ERROR: This script can be used only on Gl.iNet devices with firmware v3"
+	exit 1
+fi
+
+cmd="$1"
+shift
+
+case "$cmd" in
+	connect) cmd_connect "$@";;
+	install) cmd_install ;;
+	login) cmd_login ;;
+	uninstall) cmd_uninstall "$*" ;;
+	update) cmd_update ;;
+	*) cmd_usage ;;
+esac
+
+exit $?
