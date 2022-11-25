@@ -416,7 +416,7 @@ servers_add()
 			echo "set wireguard.peer_$id.hostname='$hostname'"
 			echo "set wireguard.peer_$id.allowed_ips='0.0.0.0/0'"
 			echo "set wireguard.peer_$id.ipv6_enable='0'"
-			echo "set wireguard.peer_$id.presharedkey_enable='0'"
+			echo "set wireguard.peer_$id.presharedkey_enable='1'"
 			echo "set wireguard.peer_$id.local_access='0'"
 			echo "set wireguard.peer_$id.masq='1'"
 			[ "$hostname" = "$active_hostname" ] &&
@@ -556,6 +556,7 @@ cmd_connect()
 		set wireguard.$peer.private_key="$privatekey"
 		set wireguard.$peer.public_key="$publickey"
 		set wireguard.$peer.preshared_key="$presharedkey"
+		set wireguard.$peer.presharedkey_enable="1"
 		set wireguard.$peer.end_point="$serveraddress:$serverport"
 		set wireguard.$peer.persistent_keepalive="$persistentkeepalive"
 		set wireguard.$peer.address_v4="$ipv4"
@@ -767,7 +768,7 @@ cmd_update()
 cmd_usage()
 {
 	cat <<-'EOF'
-		hidemevpn v1.1 (2022-10-05)
+		hidemevpn v1.2 (2022-11-25)
 
 		Hide.me VPN WireGuard support for GL.iNet devices with firmware v4
 
