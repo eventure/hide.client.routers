@@ -460,7 +460,7 @@ cmd_connect()
 	host=$(echo $hostname | cut -d. -f1)
 	domain=$(echo $hostname | cut -d. -f2-)
 
-	[ "$domain" != "hideservers.net" ] && return 1
+	[ "$domain" != "hideservers.net" ] && return 0
 
 	accesstoken=$(uci_get hideme vpn accesstoken)
 
@@ -768,7 +768,7 @@ cmd_update()
 cmd_usage()
 {
 	cat <<-'EOF'
-		hidemevpn v1.2 (2022-11-25)
+		hidemevpn v1.3 (2022-11-30)
 
 		Hide.me VPN WireGuard support for GL.iNet devices with firmware v4
 
