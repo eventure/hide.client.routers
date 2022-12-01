@@ -184,29 +184,53 @@ req_connect()
 
 proxy_func()
 {
-	config_get main_server $1 "main_server"
-	config_get enable $1 "enable"
+	config_get main_server $1 main_server
+	config_get enable $1 enable
 }
 
 peers_func()
+{
+	config_get name $1 name
+	[ "$name" = "$main_server" ] && peer_id="$1"
+}
+
+get_peer()
+{
+	local main_server
+	local enable
+	local peer_id
+
+	config_foreach proxy_func proxy
+	[ "$enable" != "1" -o -z "$main_server" ] && return 1
+	config_foreach peers_func peers
+
+	[ -z "$peer_id" ] && return 1
+
+	echo "$peer_id"
+}
+
+cmd_connect()
 {
 	local name
 	local hostname
 	local host
 	local domain
 	local ipaddr
+	local peer
+	local downup=0
 
-	peer=$1
+	[ "$1" = "downup" ] && downup=1
 
-	config_get name $peer name
+	config_load wireguard
 
-	[ "$name" != "$main_server" ] && return 1
+	peer=$(get_peer)
 
 	config_get hostname $peer hostname
 
 	if [ -z "$hostname" ]
 	then
 		config_get endpoint $peer end_point
+
 		hostname=$(echo $endpoint | cut -d: -f1)
 
 		if [ -n "$hostname" ]
@@ -221,7 +245,7 @@ peers_func()
 	host=$(echo $hostname | cut -d. -f1)
 	domain=$(echo $hostname | cut -d. -f2-)
 
-	[ "$domain" != "hideservers.net" ] && return 1
+	[ "$domain" != "hideservers.net" ] && return 0
 
 	accesstoken=$(uci_get hideme vpn accesstoken)
 
@@ -348,30 +372,6 @@ EOF
 	uci -q commit hideme
 
 	logger -t hidemevpn "session token: $sessiontoken"
-
-	connectdone=1
-}
-
-cmd_connect()
-{
-	local main_server
-	local enable
-	local connectdone=0
-	local downup=0
-
-	config_load wireguard
-	config_foreach proxy_func proxy
-
-	[ "$enable" != "1" -o "$main_server" == "" ] && exit 1
-
-	[ "$1" = "downup" ] && downup=1
-
-	config_foreach peers_func peers
-
-	if [ "$connectdone" = 0 ]
-	then
-		return 1
-	fi
 }
 
 patch_wireguard()
@@ -694,7 +694,7 @@ cmd_uninstall()
 cmd_usage()
 {
 	cat <<-'EOF'
-		hidemevpn v1.1 (2022-10-05)
+		hidemevpn v1.2 (2022-12-01)
 
 		Hide.me VPN WireGuard support for GL.iNet devices with firmware v3
 
