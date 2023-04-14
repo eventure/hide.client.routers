@@ -39,6 +39,37 @@ is_connected()
 		done
 }
 
+check_prerequisites()
+{
+	local status=0
+
+	curl --version >/dev/null 2>&1
+
+	if [ $? -ne 0 ]
+	then
+		echo "ERROR: curl not found. Install package curl"
+		status=1
+	fi
+
+	wg >/dev/null 2>&1
+
+	if [ $? -ne 0 ]
+	then
+		echo "ERROR: wg not found. Install package wireguard-tools"
+		status=1
+	fi
+
+	modinfo wireguard >/dev/null 2>&1
+
+	if [ $? -ne 0 ]
+	then
+		echo "ERROR: wireguard kernel module not found. Install package kmod-wireguard"
+		status=1
+	fi
+
+	return $status
+}
+
 req_api()
 {
 	[ -z "$1" ] && return 3
@@ -204,6 +235,8 @@ create_lib_netifd_proto_wghidemevpn()
 
 	[ -z "$dest" ] && return 1
 
+	[ ! -d $(dirname "$dest") ] && return 1
+
 	cat <<-'EOF' > "$dest"
 		#!/bin/sh
 		# Copyright 2016-2017 Dan Luedtke <mail@danrl.com>
@@ -344,20 +377,29 @@ create_usr_lib_lua_luci_model_cbi_admin_network_proto_wghidemevpn()
 
 	[ -z "$dest" ] && return 1
 
+	[ ! -d $(dirname "$dest") ] && return 1
+
 	cat <<-'EOF' > "$dest"
 		local map, section = ...
 		local hidemevpn = require "hidemevpn"
 		
 		o = section:taboption(
 		  "general",
-		  ListValue,
+		  Value,
 		  "server",
 		  translate("Location")
 		)
 		o.optional = false
 		
 		for i, location in ipairs(hidemevpn.LOCATIONS) do
-		        o:value(location[2], location[1])
+		  o:value(location[2], location[1])
+		end
+		
+		function o.validate(self, value, section)
+		  if value:match('\.hideservers\.net$') == nil then
+		    return nil, translate("Invalid location")
+		  end
+		  return Value.validate(self, value, section)
 		end
 	EOF
 
@@ -379,6 +421,8 @@ create_usr_lib_lua_luci_model_network_proto_wghidemevpn()
 	dest="$1"
 
 	[ -z "$dest" ] && return 1
+
+	[ ! -d $(dirname "$dest") ] && return 1
 
 	cat <<-'EOF' > "$dest"
 		local netmod = luci.model.network
@@ -420,6 +464,227 @@ create_usr_lib_lua_luci_model_network_proto_wghidemevpn()
 		function proto.contains_interface(self, ifc)
 		   return (netmod:ifnameof(ifc) == self:ifname())
 		end
+	EOF
+
+	ret=$?
+
+	if [ $ret -ne 0 ]
+	then
+		echo "ERROR: unable to create $dest (error code: $ret)"
+		return $ret
+	fi
+
+	return $ret
+}
+
+USR_LIBEXEC_RPCD_LUCI_FILE="/usr/libexec/rpcd/luci.hidemevpn"
+
+create_usr_libexec_rpcd_luci()
+{
+	dest="$1"
+
+	[ -z "$dest" ] && return 1
+
+	[ ! -d $(dirname "$dest") ] && return 1
+
+	cat <<-'EOF' > "$dest"
+		#!/usr/bin/env lua
+		
+		local json = require "luci.jsonc"
+		local hidemevpn = require "hidemevpn"
+		
+		local methods = {
+		    getLocations = {
+		        call = function()
+		            return { result = hidemevpn.LOCATIONS }
+		        end
+		    },
+		}
+		
+		local function parseInput()
+		    local parse = json.new()
+		    local done, err
+		
+		    while true do
+		        local chunk = io.read(4096)
+		        if not chunk then
+		            break
+		        elseif not done and not err then
+		            done, err = parse:parse(chunk)
+		        end
+		    end
+		
+		    if not done then
+		        print(json.stringify({error = err or "Incomplete input"}))
+		        os.exit(1)
+		    end
+		
+		    return parse:get()
+		end
+		
+		local function validateArgs(func, uargs)
+		    local method = methods[func]
+		    if not method then
+		        print(json.stringify({error = "Method not found"}))
+		        os.exit(1)
+		    end
+		
+		    if type(uargs) ~= "table" then
+		        print(json.stringify({error = "Invalid arguments"}))
+		        os.exit(1)
+		    end
+		
+		    uargs.ubus_rpc_session = nil
+		
+		    local k, v
+		    local margs = method.args or {}
+		    for k, v in pairs(uargs) do
+		        if margs[k] == nil or (v ~= nil and type(v) ~= type(margs[k])) then
+		            print(json.stringify({error = "Invalid arguments"}))
+		            os.exit(1)
+		        end
+		    end
+		
+		    return method
+		end
+		
+		if arg[1] == "list" then
+		    local _, method, rv = nil, nil, {}
+		    for _, method in pairs(methods) do
+		        rv[_] = method.args or {}
+		    end
+		    print((json.stringify(rv):gsub(":%[%]", ":{}")))
+		elseif arg[1] == "call" then
+		    local args = parseInput()
+		    local method = validateArgs(arg[2], args)
+		    local result, code = method.call(args)
+		    print((json.stringify(result):gsub("^%[%]$", "{}")))
+		    os.exit(code or 0)
+		end
+	EOF
+
+	ret=$?
+
+	if [ $ret -ne 0 ]
+	then
+		echo "ERROR: unable to create $dest (error code: $ret)"
+		return $ret
+	fi
+
+	chmod +x "$dest"
+	ret=$?
+
+	return $ret
+}
+
+USR_SHARE_RPCD_ACL_FILE="/usr/share/rpcd/acl.d/luci-hidemevpn.json"
+
+create_usr_share_rpcd_acl()
+{
+	dest="$1"
+
+	[ -z "$dest" ] && return 1
+
+	[ ! -d $(dirname "$dest") ] && return 1
+
+	cat <<-'EOF' > "$dest"
+		{
+		    "luci-proto-hidemevpn": {
+		        "description": "Grant access to LuCI hide.me VPN procedures",
+		        "write": {
+		            "ubus": {
+		                "luci.hidemevpn": [
+		                    "getLocations"
+		                ]
+		            }
+		        }
+		    }
+		}
+	EOF
+
+	ret=$?
+
+	if [ $ret -ne 0 ]
+	then
+		echo "ERROR: unable to create $dest (error code: $ret)"
+		return $ret
+	fi
+
+	return $ret
+}
+
+WWW_LUCI_STATIC_RESOURCES_PROTOCOL_WGHIDEMEVPN_FILE="$(uci get uhttpd.main.home)$(uci get luci.main.resourcebase)/protocol/wghidemevpn.js"
+
+create_www_luci_static_resources_protocol_wghidemevpn()
+{
+	dest="$1"
+
+	[ -z "$dest" ] && return 1
+
+	[ ! -d $(dirname "$dest") ] && return 1
+
+	cat <<-'EOF' > "$dest"
+		'use strict';
+		'require rpc';
+		'require form';
+		'require network';
+		
+		var callGetLocations = rpc.declare({
+		    object: 'luci.hidemevpn',
+		    method: 'getLocations',
+		    expect: { result: [] }
+		});
+		
+		return network.registerProtocol('wghidemevpn', {
+		    getI18n: function() {
+		        return _('hide.me VPN WireGuard');
+		    },
+		
+		    getIfname: function() {
+		        return this._ubus('l3_device') || this.sid;
+		    },
+		
+		    getOpkgPackage: function() {
+		        return 'wireguard-tools';
+		    },
+		
+		    isFloating: function() {
+		        return true;
+		    },
+		
+		    isVirtual: function() {
+		        return true;
+		    },
+		
+		    getDevices: function() {
+		        return null;
+		    },
+		
+		    containsDevice: function(ifname) {
+		        return (network.getIfnameOf(ifname) == this.getIfname());
+		    },
+		
+		    renderFormOptions: function(s) {
+		        var o;
+		
+		        o = s.taboption('general', form.Value, 'server', _('Location'))
+		        o.load = function(section_id) {
+		            return callGetLocations().then(L.bind(function(locations) {
+		                console.log(locations);
+		                for (var i = 0; i < locations.length; i++) {
+		                    this.value(locations[i][1], locations[i][0]);
+		                }
+		                return form.Value.prototype.load.apply(this, [section_id]);
+		            }, this));
+		        };
+		        o.validate = function(section_id, value) {
+		            if (value == null || !/\.hideservers\.net$/.test(value))
+		                return _('Invalid location');
+		
+		            return true;
+		        };
+		    },
+		});
 	EOF
 
 	ret=$?
@@ -643,9 +908,20 @@ cmd_reinstall()
 	create_usr_lib_lua_luci_model_network_proto_wghidemevpn "$USR_LIB_LUA_LUCI_MODEL_NETWORK_PROTO_WGHIDEMEVPN_FILE"
 	create_usr_lib_lua_luci_model_cbi_admin_network_proto_wghidemevpn "$USR_LIB_LUA_LUCI_MODEL_CBI_ADMIN_NETWORK_PROTO_WGHIDEMEVPN_FILE"
 	create_lib_netifd_proto_wghidemevpn "$LIB_NETIFD_PROTO_WGHIDEMEVPN_FILE"
+	create_usr_libexec_rpcd_luci "$USR_LIBEXEC_RPCD_LUCI_FILE"
+	create_usr_share_rpcd_acl "$USR_SHARE_RPCD_ACL_FILE"
+	create_www_luci_static_resources_protocol_wghidemevpn "$WWW_LUCI_STATIC_RESOURCES_PROTOCOL_WGHIDEMEVPN_FILE"
 
-	/etc/init.d/network reload 2>/dev/null
-	rm -r /tmp/luci-modulecache/
+	cat <<-EOF > /usr/lib/lua/hidemevpn.lua
+		module "hidemevpn"
+		LOCATIONS = { }
+	EOF
+
+	echo "Restarting network service. This may take a while. Please wait."
+	service network restart
+
+	rm -rf /tmp/luci-modulecache/
+	killall -q -HUP rpcd
 
 	sed -i '/\/usr\/sbin\/hidemevpn/d' /etc/crontabs/root 2>/dev/null
 
@@ -772,15 +1048,20 @@ cmd_uninstall()
 
 	uci commit network
 
-	nice_rm /lib/netifd/proto/wghidemevpn.sh
+	nice_rm "$LIB_NETIFD_PROTO_WGHIDEMEVPN_FILE"
 
-	/etc/init.d/network reload
+	echo "Restarting network service. This may take a while. Please wait."
+	service network restart
 
 	nice_rm /usr/lib/lua/hidemevpn.lua
-	nice_rm /usr/lib/lua/luci/model/network/proto_wghidemevpn.lua
-	nice_rm /usr/lib/lua/luci/model/cbi/admin_network/proto_wghidemevpn.lua
+	nice_rm "$USR_LIB_LUA_LUCI_MODEL_NETWORK_PROTO_WGHIDEMEVPN_FILE"
+	nice_rm "$USR_LIB_LUA_LUCI_MODEL_CBI_ADMIN_NETWORK_PROTO_WGHIDEMEVPN_FILE"
+	nice_rm "$USR_LIBEXEC_RPCD_LUCI_FILE"
+	nice_rm "$USR_SHARE_RPCD_ACL_FILE"
+	nice_rm "$WWW_LUCI_STATIC_RESOURCES_PROTOCOL_WGHIDEMEVPN_FILE"
 
-	rm -r /tmp/luci-modulecache/
+	rm -rf /tmp/luci-modulecache/
+	killall -q -HUP rpcd
 
 	nice_rm /etc/config/hideme
 	nice_rm /usr/sbin/hidemevpn
@@ -855,7 +1136,7 @@ cmd_update()
 	fi
 
 	mv -f $luafile /usr/lib/lua/hidemevpn.lua
-	rm -r /tmp/luci-modulecache/
+	rm -rf /tmp/luci-modulecache/
 
 	logger -t hidemevpn "update: servers updated"
 }
@@ -863,7 +1144,7 @@ cmd_update()
 cmd_usage()
 {
 	cat <<-'EOF'
-		hidemevpn v1.0 (2022-10-05)
+		hidemevpn v1.1 (2023-04-14)
 
 		Hide.me VPN WireGuard support for OpenWrt devices (since 18.06+)
 
@@ -882,6 +1163,11 @@ cmd_usage()
 if ! is_openwrt
 then
 	echo "ERROR: This script can be used only on OpenWrt 18.06 and newer"
+	exit 1
+fi
+
+if ! check_prerequisites
+then
 	exit 1
 fi
 

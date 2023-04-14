@@ -40,6 +40,14 @@ NOTE: Only access token is saved. Access token is automatically refreshed when n
 
 Update of the script is done by starting install again. Settings will be preserved.
 
+Script requires following binaries to work:
+	curl (package: curl)
+	wg (package: wireguard-tools)
+
+It also requires kernel module wireguard that is not installed by default on 18.06 and 19.07 and must be installed manually, package: kmod-wireguard.
+
+If any of the prerequisites missing script won't run.
+
 
 ## Uninstall
 
@@ -83,16 +91,15 @@ Although it is possible to create multiple interfaces that is not recommended an
 
 Multiple connections will clash at least with routes.
 
-If servers list cannot be fetched it will be empty. In that case only solution is to set location manually from command line on  the device itself. Check section "Custom server (OpenWrt)"
-
+If servers list cannot be fetched it will be empty. When that occurs server must be defined manually. Check section "Custom server (OpenWrt)" for more details.
 
 ## Custom server (OpenWrt)
 
-If there is a need to connect to a specific or unlisted server, that can be done by setting UCI parameter server, like:
+If there is a need to connect to a specific or unlisted server, that can be done by scrolling at the bottom of the "Location" list (mentioned in the previous section) and select "custom" server and then enter custom hostname.
 
-`uci set network.wghide.server="us.hideservers.net"`
+Hostname must be in hideservers.net domain.
+No other domains are accepted.
 
-`uci commit network`
 
 ## Custom server (GL.iNet)
 
@@ -139,3 +146,19 @@ For everything that is not mentioned here, please check source code on
 Github:
 
 https://github.com/eventure/hide.client.routers
+
+## Known issues
+
+Some OpenWrt builds of curl use WolfSSL that is compiled without support for RSA 8192 bit keys.
+As hide.me's servers use 8192 bit keys in certificates curl won't be able to process such certificates and it will fail.
+
+That condition is manifested as an error code 77:
+
+- on login: Cannot obtain access token! Error code: 77
+- when connecting (in log): user.notice hidemevpn: cannot connect: Error code: 77
+
+To fix that issue it is needed to replace curl with one that has support for 8192 bit RSA keys.
+
+If WolfSSL is required, then it must be compiled to support 8192 bit RSA keys by increasing FP_MAX_BITS to 16384 as mentioned on the following link:
+
+https://github.com/wolfSSL/wolfssl/issues/2924#issuecomment-620030245
