@@ -1,0 +1,1149 @@
+#!/bin/sh
+
+. /lib/functions.sh
+. /usr/share/libubox/jshn.sh
+
+nice_rm()
+{
+	[ -f "$1" -o -L "$1" ] && rm -f "$1"
+}
+
+is_openwrt()
+{
+	local major
+	local minor
+
+	[ -f /etc/os-release ] && . /etc/os-release
+	[ ! -f /etc/os-release -a -f /usr/lib/os-release ] && . /usr/lib/os-release
+
+	[ "$ID" != "openwrt" ] && return 1
+
+	major=$(echo $VERSION_ID | cut -d. -f1)
+	minor=$(echo $VERSION_ID | cut -d. -f2 | sed 's~^\([0-9]\+\).*~\1~')
+
+	[ "$major" -lt 18 ] && return 1
+	[ "$major" -eq 18 -a "$minor" -lt 6 ] && return 1
+
+	# 18.06 or newer
+	return 0
+}
+
+is_connected()
+{
+	wg show all latest-handshakes |
+		while read interface publickey time
+		do
+			proto=$(uci -q get network.$interface.proto)
+
+			[ "$proto" = "wghidemevpn" ] && return 1
+		done
+}
+
+check_prerequisites()
+{
+	local status=0
+
+	curl --version >/dev/null 2>&1
+
+	if [ $? -ne 0 ]
+	then
+		echo "ERROR: curl not found. Install package curl"
+		status=1
+	fi
+
+	wg >/dev/null 2>&1
+
+	if [ $? -ne 0 ]
+	then
+		echo "ERROR: wg not found. Install package wireguard-tools"
+		status=1
+	fi
+
+	modinfo wireguard >/dev/null 2>&1
+
+	if [ $? -ne 0 ]
+	then
+		echo "ERROR: wireguard kernel module not found. Install package kmod-wireguard"
+		status=1
+	fi
+
+	return $status
+}
+
+req_api()
+{
+	[ -z "$1" ] && return 3
+
+	result=$(curl \
+		-sf \
+		--pinnedpubkey 'sha256//wFV2S+sEzTsi5WsueDIqm7xgu398q4prPQ/4EHARDLc=' \
+		https://api.hide.me/$1)
+
+	ret=$?
+
+	echo "$result"
+
+	return $ret
+}
+
+req()
+{
+	certtemp=$(mktemp -t hidemevpn.XXXXXX)
+
+	cat <<-'EOF' > $certtemp
+		-----BEGIN CERTIFICATE-----
+		MIIDIDCCAoGgAwIBAgIQLdge/7j1qcVfuft2G76G3TAKBggqhkjOPQQDBDCBkTEL
+		MAkGA1UEBhMCTVkxHDAaBgNVBAgME1dpbGF5YWggUGVyc2VrdXR1YW4xDzANBgNV
+		BAcMBkxhYnVhbjEZMBcGA1UECgwQZVZlbnR1cmUgTGltaXRlZDEeMBwGA1UECwwV
+		Q2VydGlmaWNhdGUgQXV0aG9yaXR5MRgwFgYDVQQDDA9IaWRlLk1lIFJvb3QgQ0Ew
+		HhcNMjIwNjI4MDkxNzUxWhcNMzcwNjI0MDkxNzUxWjCBkTELMAkGA1UEBhMCTVkx
+		HDAaBgNVBAgME1dpbGF5YWggUGVyc2VrdXR1YW4xDzANBgNVBAcMBkxhYnVhbjEZ
+		MBcGA1UECgwQZVZlbnR1cmUgTGltaXRlZDEeMBwGA1UECwwVQ2VydGlmaWNhdGUg
+		QXV0aG9yaXR5MRgwFgYDVQQDDA9IaWRlLk1lIFJvb3QgQ0EwgZswEAYHKoZIzj0C
+		AQYFK4EEACMDgYYABAATuOWf5nsfV1Ev/XZ6FoXrjXZNGP/3TiMYeeFQRolJx/PA
+		8hdvojnMoE+K2uCYogkRKCeC/3rseOM6cXAQacz9kAFU+i3GuWpICmvT+X3Hadip
+		1cAWoS/fsBIfbeq78jPqM3QqvYe3+7mys8U7h3oStkig+39VDRlfreZOBsB4/xMV
+		NqN2MHQwDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAYYwHQYDVR0OBBYE
+		FGjGoWRaW9qpUqEd0yWWh0MGrokIMB8GA1UdIwQYMBaAFGjGoWRaW9qpUqEd0yWW
+		h0MGrokIMBEGCWCGSAGG+EIBAQQEAwIABzAKBggqhkjOPQQDBAOBjAAwgYgCQgG3
+		NPmMQBrovZPmx5K13D+KsRJLK8ZEFG9f3YT2gXroTwPfp02Y7GI+WezwVL5/lgxg
+		6j8mtKjbaItL0tNLDBvcAAJCAYPJcIlh4/VwDo5xqpGokwdpzUvnovRrLFvxXwoM
+		I61kiAyGUG/1dK8CTLM469KO3bh++9f85jRnXZoLksd7s3pp
+		-----END CERTIFICATE-----
+	EOF
+
+	[ -n "$5" ] && ip route add $5
+
+	result=$(curl \
+		-sf \
+		--cacert $certtemp \
+		-X POST \
+		--data-binary "$3" \
+		${4:+--resolve $1:430:$4} \
+		https://$1:430/v1.0.0/$2)
+
+	ret=$?
+
+	rm -f $certtemp
+
+	[ -n "$5" ] && ip route del $5
+
+	echo "$result"
+
+	return $ret
+}
+
+req_accesstoken()
+{
+	[ -z "$1" -o -z "$2" ] && return 1
+
+	hostname=$1
+	host=$(echo $hostname | cut -d. -f1)
+
+	json_init
+	json_add_string domain "hide.me"
+	json_add_string host "$host"
+
+	if [ -z "$3" ]
+	then
+		accesstoken="$2"
+		json_add_string accessToken "$accesstoken"
+	else
+		username="$2"
+		password="$3"
+		json_add_string username "$username"
+		json_add_string password "$password"
+	fi
+
+	token=$(req $hostname accessToken "$(json_dump)" "$4" "$5")
+
+	ret=$?
+
+	echo $token | tr -d \"
+
+	return $ret
+}
+
+req_connect()
+{
+	[ -z "$1" -o -z "$2" -o -z "$3" ] && return 1
+
+	hostname=$1
+	host=$(echo $hostname | cut -d. -f1)
+
+	accesstoken=$2
+	publickey=$3
+
+	json_init
+	json_add_string domain "hide.me"
+	json_add_string host "$host"
+	json_add_string accessToken "$accesstoken"
+	json_add_string publicKey "$publickey"
+
+	result=$(req $hostname connect "$(json_dump)" "$4" "$5")
+
+	ret=$?
+
+	echo $result
+
+	return $ret
+}
+
+LIB_NETIFD_PROTO_WGHIDEMEVPN_FILE="/lib/netifd/proto/wghidemevpn.sh"
+
+create_lib_netifd_proto_wghidemevpn()
+{
+	dest="$1"
+
+	[ -z "$dest" ] && return 1
+
+	[ ! -d $(dirname "$dest") ] && return 1
+
+	cat <<-'EOF' > "$dest"
+		#!/bin/sh
+		# Copyright 2016-2017 Dan Luedtke <mail@danrl.com>
+		# Licensed to the public under the Apache License 2.0.
+		
+		
+		WG=/usr/bin/wg
+		if [ ! -x $WG ]; then
+		  logger -t "wghidemevpn" "error: missing wireguard-tools (${WG})"
+		  exit 0
+		fi
+		
+		
+		[ -n "$INCLUDE_ONLY" ] || {
+		  . /lib/functions.sh
+		  . ../netifd-proto.sh
+		  init_proto "$@"
+		}
+		
+		
+		proto_wghidemevpn_init_config() {
+		  proto_config_add_string "server"
+		  available=1
+		  no_proto_task=1
+		}
+		
+		
+		proto_wghidemevpn_setup() {
+		  local config="$1"
+		  local server
+		  local result
+		  local ret
+		  local wgconffile
+		  local ipv4
+		  local ipv6
+		  local dnsv4
+		  local dnsv6
+		
+		  # load configuration
+		  config_load network
+		  config_get server "${config}" "server"
+		
+		  # create interface
+		  ip link del dev "${config}" 2>/dev/null
+		  ip link add dev "${config}" type wireguard
+		
+		  proto_init_update "${config}" 1
+		
+		  result=$(/usr/sbin/hidemevpn connect "${server}")
+		
+		  ret=$?
+		
+		  if [ $ret -ne 0 ]
+		  then
+		    sleep 30
+		    proto_setup_failed "${config}"
+		    exit 1
+		  fi
+		
+		  json_load "$result"
+		
+		  json_get_var wgconffile wgconffile
+		  json_get_var ipv4 ipv4
+		  json_get_var ipv6 ipv6
+		  json_get_var dnsv4 dnsv4
+		  json_get_var dnsv6 dnsv6
+		
+		  # apply configuration file
+		  ${WG} setconf ${config} "${wgconffile}"
+		  WG_RETURN=$?
+		
+		  # delete configuration file
+		  rm -f "${wgconffile}"
+		
+		  # needed to clear previous json_load
+		  proto_init_update "${config}" 1
+		
+		  # check status
+		  if [ ${WG_RETURN} -ne 0 ]; then
+		    sleep 5
+		    proto_setup_failed "${config}"
+		    exit 1
+		  fi
+		
+		  proto_add_ipv4_address "${ipv4}" "32"
+		  proto_add_ipv6_address "${ipv6}" "128"
+		
+		  proto_add_dns_server "${dnsv4}"
+		  proto_add_dns_server "${dnsv6}"
+		
+		  proto_add_ipv6_route "8000::" "1"
+		  proto_add_ipv6_route "::" "1"
+		  proto_add_ipv4_route "0.0.0.0" "1"
+		  proto_add_ipv4_route "128.0.0.0" "1"
+		
+		  # endpoint dependency
+		  wg show "${config}" endpoints | \
+		    sed -E 's/\[?([0-9.:a-f]+)\]?:([0-9]+)/\1 \2/' | \
+		    while IFS=$'\t ' read -r key address port; do
+		    [ -n "${port}" ] || continue
+		    proto_add_host_dependency "${config}" "${address}"
+		  done
+		
+		  proto_send_update "${config}"
+		}
+		
+		
+		proto_wghidemevpn_teardown() {
+		  local config="$1"
+		  ip link del dev "${config}" >/dev/null 2>&1
+		}
+		
+		
+		[ -n "$INCLUDE_ONLY" ] || {
+		  add_protocol wghidemevpn
+		}
+	EOF
+
+	ret=$?
+
+	if [ $ret -ne 0 ]
+	then
+		echo "ERROR: unable to create $dest (error code: $ret)"
+		return $ret
+	fi
+
+	chmod +x "$dest"
+	ret=$?
+
+	return $ret
+}
+
+USR_LIB_LUA_LUCI_MODEL_CBI_ADMIN_NETWORK_PROTO_WGHIDEMEVPN_FILE="/usr/lib/lua/luci/model/cbi/admin_network/proto_wghidemevpn.lua"
+
+create_usr_lib_lua_luci_model_cbi_admin_network_proto_wghidemevpn()
+{
+	dest="$1"
+
+	[ -z "$dest" ] && return 1
+
+	[ ! -d $(dirname "$dest") ] && return 1
+
+	cat <<-'EOF' > "$dest"
+		local map, section = ...
+		local hidemevpn = require "hidemevpn"
+		
+		o = section:taboption(
+		  "general",
+		  Value,
+		  "server",
+		  translate("Location")
+		)
+		o.optional = false
+		
+		for i, location in ipairs(hidemevpn.LOCATIONS) do
+		  o:value(location[2], location[1])
+		end
+		
+		function o.validate(self, value, section)
+		  if value:match('\.hideservers\.net$') == nil then
+		    return nil, translate("Invalid location")
+		  end
+		  return Value.validate(self, value, section)
+		end
+	EOF
+
+	ret=$?
+
+	if [ $ret -ne 0 ]
+	then
+		echo "ERROR: unable to create $dest (error code: $ret)"
+		return $ret
+	fi
+
+	return $ret
+}
+
+USR_LIB_LUA_LUCI_MODEL_NETWORK_PROTO_WGHIDEMEVPN_FILE="/usr/lib/lua/luci/model/network/proto_wghidemevpn.lua"
+
+create_usr_lib_lua_luci_model_network_proto_wghidemevpn()
+{
+	dest="$1"
+
+	[ -z "$dest" ] && return 1
+
+	[ ! -d $(dirname "$dest") ] && return 1
+
+	cat <<-'EOF' > "$dest"
+		local netmod = luci.model.network
+		local interface = luci.model.network.interface
+		local proto = netmod:register_protocol("wghidemevpn")
+		
+		function proto.get_i18n(self)
+		  return luci.i18n.translate("hide.me VPN WireGuard")
+		end
+		
+		function proto.ifname(self)
+		  return self.sid
+		end
+		
+		function proto.get_interface(self)
+		  return interface(self:ifname(), self)
+		end
+		
+		function proto.opkg_package(self)
+		  return "wireguard-tools"
+		end
+		
+		function proto.is_installed(self)
+		  return nixio.fs.access("/lib/netifd/proto/wghidemevpn.sh")
+		end
+		
+		function proto.is_floating(self)
+		  return true
+		end
+		
+		function proto.is_virtual(self)
+		  return true
+		end
+		
+		function proto.get_interfaces(self)
+		  return nil
+		end
+		
+		function proto.contains_interface(self, ifc)
+		   return (netmod:ifnameof(ifc) == self:ifname())
+		end
+	EOF
+
+	ret=$?
+
+	if [ $ret -ne 0 ]
+	then
+		echo "ERROR: unable to create $dest (error code: $ret)"
+		return $ret
+	fi
+
+	return $ret
+}
+
+USR_LIBEXEC_RPCD_LUCI_FILE="/usr/libexec/rpcd/luci.hidemevpn"
+
+create_usr_libexec_rpcd_luci()
+{
+	dest="$1"
+
+	[ -z "$dest" ] && return 1
+
+	[ ! -d $(dirname "$dest") ] && return 1
+
+	cat <<-'EOF' > "$dest"
+		#!/usr/bin/env lua
+		
+		local json = require "luci.jsonc"
+		local hidemevpn = require "hidemevpn"
+		
+		local methods = {
+		    getLocations = {
+		        call = function()
+		            return { result = hidemevpn.LOCATIONS }
+		        end
+		    },
+		}
+		
+		local function parseInput()
+		    local parse = json.new()
+		    local done, err
+		
+		    while true do
+		        local chunk = io.read(4096)
+		        if not chunk then
+		            break
+		        elseif not done and not err then
+		            done, err = parse:parse(chunk)
+		        end
+		    end
+		
+		    if not done then
+		        print(json.stringify({error = err or "Incomplete input"}))
+		        os.exit(1)
+		    end
+		
+		    return parse:get()
+		end
+		
+		local function validateArgs(func, uargs)
+		    local method = methods[func]
+		    if not method then
+		        print(json.stringify({error = "Method not found"}))
+		        os.exit(1)
+		    end
+		
+		    if type(uargs) ~= "table" then
+		        print(json.stringify({error = "Invalid arguments"}))
+		        os.exit(1)
+		    end
+		
+		    uargs.ubus_rpc_session = nil
+		
+		    local k, v
+		    local margs = method.args or {}
+		    for k, v in pairs(uargs) do
+		        if margs[k] == nil or (v ~= nil and type(v) ~= type(margs[k])) then
+		            print(json.stringify({error = "Invalid arguments"}))
+		            os.exit(1)
+		        end
+		    end
+		
+		    return method
+		end
+		
+		if arg[1] == "list" then
+		    local _, method, rv = nil, nil, {}
+		    for _, method in pairs(methods) do
+		        rv[_] = method.args or {}
+		    end
+		    print((json.stringify(rv):gsub(":%[%]", ":{}")))
+		elseif arg[1] == "call" then
+		    local args = parseInput()
+		    local method = validateArgs(arg[2], args)
+		    local result, code = method.call(args)
+		    print((json.stringify(result):gsub("^%[%]$", "{}")))
+		    os.exit(code or 0)
+		end
+	EOF
+
+	ret=$?
+
+	if [ $ret -ne 0 ]
+	then
+		echo "ERROR: unable to create $dest (error code: $ret)"
+		return $ret
+	fi
+
+	chmod +x "$dest"
+	ret=$?
+
+	return $ret
+}
+
+USR_SHARE_RPCD_ACL_FILE="/usr/share/rpcd/acl.d/luci-hidemevpn.json"
+
+create_usr_share_rpcd_acl()
+{
+	dest="$1"
+
+	[ -z "$dest" ] && return 1
+
+	[ ! -d $(dirname "$dest") ] && return 1
+
+	cat <<-'EOF' > "$dest"
+		{
+		    "luci-proto-hidemevpn": {
+		        "description": "Grant access to LuCI hide.me VPN procedures",
+		        "write": {
+		            "ubus": {
+		                "luci.hidemevpn": [
+		                    "getLocations"
+		                ]
+		            }
+		        }
+		    }
+		}
+	EOF
+
+	ret=$?
+
+	if [ $ret -ne 0 ]
+	then
+		echo "ERROR: unable to create $dest (error code: $ret)"
+		return $ret
+	fi
+
+	return $ret
+}
+
+WWW_LUCI_STATIC_RESOURCES_PROTOCOL_WGHIDEMEVPN_FILE="$(uci get uhttpd.main.home)$(uci get luci.main.resourcebase)/protocol/wghidemevpn.js"
+
+create_www_luci_static_resources_protocol_wghidemevpn()
+{
+	dest="$1"
+
+	[ -z "$dest" ] && return 1
+
+	[ ! -d $(dirname "$dest") ] && return 1
+
+	cat <<-'EOF' > "$dest"
+		'use strict';
+		'require rpc';
+		'require form';
+		'require network';
+		
+		var callGetLocations = rpc.declare({
+		    object: 'luci.hidemevpn',
+		    method: 'getLocations',
+		    expect: { result: [] }
+		});
+		
+		return network.registerProtocol('wghidemevpn', {
+		    getI18n: function() {
+		        return _('hide.me VPN WireGuard');
+		    },
+		
+		    getIfname: function() {
+		        return this._ubus('l3_device') || this.sid;
+		    },
+		
+		    getOpkgPackage: function() {
+		        return 'wireguard-tools';
+		    },
+		
+		    isFloating: function() {
+		        return true;
+		    },
+		
+		    isVirtual: function() {
+		        return true;
+		    },
+		
+		    getDevices: function() {
+		        return null;
+		    },
+		
+		    containsDevice: function(ifname) {
+		        return (network.getIfnameOf(ifname) == this.getIfname());
+		    },
+		
+		    renderFormOptions: function(s) {
+		        var o;
+		
+		        o = s.taboption('general', form.Value, 'server', _('Location'))
+		        o.load = function(section_id) {
+		            return callGetLocations().then(L.bind(function(locations) {
+		                console.log(locations);
+		                for (var i = 0; i < locations.length; i++) {
+		                    this.value(locations[i][1], locations[i][0]);
+		                }
+		                return form.Value.prototype.load.apply(this, [section_id]);
+		            }, this));
+		        };
+		        o.validate = function(section_id, value) {
+		            if (value == null || !/\.hideservers\.net$/.test(value))
+		                return _('Invalid location');
+		
+		            return true;
+		        };
+		    },
+		});
+	EOF
+
+	ret=$?
+
+	if [ $ret -ne 0 ]
+	then
+		echo "ERROR: unable to create $dest (error code: $ret)"
+		return $ret
+	fi
+
+	return $ret
+}
+
+download_and_install()
+{
+	script=$(mktemp -t hidemevpn.XXXXXX)
+
+	curl \
+		-sfo $script \
+		https://raw.githubusercontent.com/eventure/hide.client.openwrt/master/openwrt/hidemevpn-alt
+
+	ret=$?
+	[ $ret -ne 0 ] && return $ret
+
+	mv -f $script /usr/sbin/hidemevpn
+	chmod +x /usr/sbin/hidemevpn
+}
+
+store_accesstoken()
+{
+	token="$1"
+
+	[ ! -f /etc/config/hideme ] && touch /etc/config/hideme
+
+	uci -q batch <<-EOF
+		set hideme.vpn=hideme
+		set hideme.vpn.accesstoken="$token"
+	EOF
+
+	uci -q commit hideme
+}
+
+process_server()
+{
+	json_select $2
+	json_get_var id id
+	json_get_var flag flag
+	json_get_var hostname hostname
+	json_get_var displayname displayName
+
+	[ -z "$id" -o -z "$flag" -o -z "$hostname" -o -z "$displayname" ] && return
+
+	host=$(echo $hostname | sed 's~-\(v[46]\|ds\)\.hideservers\.net$~~' | tr -- - _)
+
+	if [ "$3" = "child" ]
+	then
+		name="hideme_${flag}_$host"
+	else
+		name="hideme_$host"
+	fi
+
+	echo "$name $hostname $id $displayname"
+
+	json_is_a children array &&
+		json_for_each_item process_server children child
+
+	json_select ..
+}
+
+servers_process()
+{
+	json_load "$1"
+
+	json_for_each_item process_server servers |
+		sort
+}
+
+servers_get()
+{
+	result=$(req_api v1/network/paid/en)
+
+	ret=$?
+
+	[ $ret -ne 0 ] && return $ret
+
+	echo '{"servers":'$result'}'
+
+	return $ret
+}
+
+cmd_connect()
+{
+	local host
+	local domain
+	local ipaddr
+	local hostname="$1"
+
+	[ -z "$hostname" ] && return 1
+
+	host=$(echo $hostname | cut -d. -f1)
+	domain=$(echo $hostname | cut -d. -f2-)
+
+	[ "$domain" != "hideservers.net" ] && return 1
+
+	accesstoken=$(uci_get hideme vpn accesstoken)
+
+	if [ -z "$accesstoken" ]
+	then
+		logger -t hidemevpn "no access token available. unable to connect. please login."
+		return 1
+	fi
+
+	privatekey=$(wg genkey)
+	publickey=$(echo $privatekey | wg pubkey)
+
+	[ -z "$privatekey" ] && return 1
+	[ -z "$publickey" ] && return 1
+
+	result=$(req_connect "$hostname" "$accesstoken" "$publickey" "$ipaddr" "$route")
+
+	ret=$?
+
+	if [ $ret -ne 0 ]
+	then
+		logger -t hidemevpn "cannot connect: Error code: $ret"
+
+		[ $ret -ne 22 ] && return 1
+
+		token=$(req_accesstoken "$hostname" "$accesstoken" "" "$ipaddr" "$route")
+
+		ret=$?
+
+		if [ "$ret" != "0" -o -z "$token" ]
+		then
+			logger -t hidemevpn "cannot obtain access token! error code: $ret"
+			if [ "$ret" -eq 22 ]
+			then
+				store_accesstoken ""
+				logger -t hidemevpn "invalid accesstoken removed. please login again."
+			fi
+			return 1
+		fi
+
+		store_accesstoken "$token"
+
+		logger -t hidemevpn "new access token obtained"
+
+		result=$(req_connect "$hostname" "$token" "$publickey" "$ipaddr" "$route")
+
+		ret=$?
+
+		if [ $ret -ne 0 ]
+		then
+			logger -t hidemevpn "cannot connect! error code: $ret"
+			return 1
+		fi
+	fi
+
+	json_load "$result"
+
+	json_get_var publickey publicKey
+	json_get_var presharedkey presharedKey
+	json_get_var persistentkeepalive persistentKeepalive
+	json_get_var sessiontoken sessionToken
+
+	json_select endpoint
+	json_get_var serveraddress IP
+	json_get_var serverport Port
+	json_select ..
+
+	json_select allowedIps
+	json_get_var ipv4 1
+	json_get_var ipv6 2
+	json_select ..
+
+	json_select DNS
+	json_get_var dnsv4 1
+	json_get_var dnsv6 2
+	json_select ..
+
+	# normalize to seconds
+	persistentkeepalive=${persistentkeepalive%%000000000}
+
+	[ -z "$publickey" ] && return 1
+	[ -z "$presharedkey" ] && return 1
+	[ -z "$persistentkeepalive" ] && return 1
+	[ -z "$sessiontoken" ] && return 1
+	[ -z "$serveraddress" ] && return 1
+	[ -z "$serverport" ] && return 1
+	[ -z "$ipv4" ] && return 1
+	[ -z "$ipv6" ] && return 1
+	[ -z "$dnsv4" ] && return 1
+	[ -z "$dnsv6" ] && return 1
+
+	wgconffile=$(mktemp -t hidemevpn.XXXXXX)
+
+	umask 077
+	echo "[Interface]"                                 >  "${wgconffile}"
+	echo "PrivateKey=${privatekey}"                    >> "${wgconffile}"
+	echo "[Peer]"                                      >> "${wgconffile}"
+	echo "PublicKey=${publickey}"                      >> "${wgconffile}"
+	echo "PresharedKey=${presharedkey}"                >> "${wgconffile}"
+	echo "AllowedIPs=0.0.0.0/0"                        >> "${wgconffile}"
+	echo "AllowedIPs=::/0"                             >> "${wgconffile}"
+	echo "Endpoint=$serveraddress:$serverport"         >> "${wgconffile}"
+	echo "PersistentKeepalive=${persistentkeepalive}"  >> "${wgconffile}"
+
+	json_init
+	json_add_string "wgconffile" "$wgconffile"
+	json_add_string "ipv4" $ipv4
+	json_add_string "ipv6" $ipv6
+	json_add_string "dnsv4" $dnsv4
+	json_add_string "dnsv6" $dnsv6
+	json_dump
+
+	logger -t hidemevpn "session token: $sessiontoken"
+}
+
+cmd_reinstall()
+{
+	create_usr_lib_lua_luci_model_network_proto_wghidemevpn "$USR_LIB_LUA_LUCI_MODEL_NETWORK_PROTO_WGHIDEMEVPN_FILE"
+	create_usr_lib_lua_luci_model_cbi_admin_network_proto_wghidemevpn "$USR_LIB_LUA_LUCI_MODEL_CBI_ADMIN_NETWORK_PROTO_WGHIDEMEVPN_FILE"
+	create_lib_netifd_proto_wghidemevpn "$LIB_NETIFD_PROTO_WGHIDEMEVPN_FILE"
+	create_usr_libexec_rpcd_luci "$USR_LIBEXEC_RPCD_LUCI_FILE"
+	create_usr_share_rpcd_acl "$USR_SHARE_RPCD_ACL_FILE"
+	create_www_luci_static_resources_protocol_wghidemevpn "$WWW_LUCI_STATIC_RESOURCES_PROTOCOL_WGHIDEMEVPN_FILE"
+
+	cat <<-EOF > /usr/lib/lua/hidemevpn.lua
+		module "hidemevpn"
+		LOCATIONS = { }
+	EOF
+
+	echo "Restarting network service. This may take a while. Please wait."
+	service network restart
+
+	rm -rf /tmp/luci-modulecache/
+	killall -q -HUP rpcd
+
+	sed -i '/\/usr\/sbin\/hidemevpn/d' /etc/crontabs/root 2>/dev/null
+
+	date +'%M %H * * * /usr/sbin/hidemevpn update' >> /etc/crontabs/root
+	echo '* * * * * /usr/sbin/hidemevpn monitor' >> /etc/crontabs/root
+
+	/etc/init.d/cron restart
+}
+
+cmd_install()
+{
+	echo "Downloading and installing latest version..."
+	download_and_install
+
+	ret=$?
+	if [ $ret -ne 0 ]
+	then
+		echo "ERROR occured while downloading. Error code: $ret"
+		exit $ret
+	fi
+
+	echo "Installing hide.me VPN support..."
+	cmd_reinstall
+
+	echo "Fetching and processing servers... (this may take a while)"
+	cmd_update
+
+	accesstoken=$(uci_get hideme vpn accesstoken)
+
+	if [ -n "$accesstoken" ]
+	then
+		echo "Already logged in."
+		echo "If needed relogin with: hidemevpn login"
+	else
+		echo "Login..."
+		cmd_login
+	fi
+
+	echo "Install complete!"
+}
+
+cmd_login()
+{
+	read -p "Username: " username < /dev/tty
+	read -p "Password: " -s password < /dev/tty
+	echo
+
+	if [ -z "$username" -o -z "$password" ]
+	then
+		echo "Username and password cannot be empty!"
+		echo "Please try again using command: hidemevpn login"
+		return 1
+	fi
+
+	defaultserver="any.hideservers.net"
+
+	read -p "Server (default: $defaultserver): " server < /dev/tty
+
+	[ -z "$server" ] && server="$defaultserver"
+
+	echo "Checking username and password and requesting access token"
+
+	token=$(req_accesstoken $server "$username" "$password")
+
+	ret=$?
+
+	if [ "$ret" != "0" -o -z "$token" ]
+	then
+		echo "Cannot obtain access token! Error code: $ret"
+		return $ret
+	fi
+
+	echo "Username validated and access token obtained!"
+
+	store_accesstoken "$token"
+}
+
+cmd_monitor()
+{
+	wg show all latest-handshakes |
+		while read interface publickey time
+		do
+			[ -z $time -o $time = 0 ] && continue
+
+			idle=$(($(date +%s)-$time))
+			[ $idle -lt 150 ] && continue
+
+			proto=$(uci -q get network.$interface.proto)
+
+			[ "$proto" != "wghidemevpn" ] && continue
+
+			logger -t hidemevpn "monitor: reload $interface"
+
+			ifup $interface
+		done
+}
+
+cmd_uninstall()
+{
+	if [ "$1" != "--yes-uninstall" ]
+	then
+		echo "WARNING: This will completely uninstall support for Hide.me VPN's WireGuard from this device."
+		echo "         Including settings, modifications and script itself."
+		echo "         To confirm uninstallation please rerun with \"hidemevpn uninstall --yes-uninstall\""
+		return 1
+	fi
+
+	is_connected
+	if [ $? -eq 1 ]
+	then
+		echo "Make sure that WireGuard connection to Hide.me is disconnected before trying to uninstall!"
+		return 1
+	fi
+
+	sed -i '/\/usr\/sbin\/hidemevpn/d' /etc/crontabs/root
+	[ ! -s /etc/crontabs/root ] && nice_rm /etc/crontabs/root
+	/etc/init.d/cron restart
+
+	ubus -S call network.interface dump |
+		jsonfilter -e "@.interface[@.proto='wghidemevpn']" |
+		jsonfilter -a -e '@[*].interface' |
+		sed 's~^~delete network.~' |
+		uci -q batch
+
+	uci commit network
+
+	nice_rm "$LIB_NETIFD_PROTO_WGHIDEMEVPN_FILE"
+
+	echo "Restarting network service. This may take a while. Please wait."
+	service network restart
+
+	nice_rm /usr/lib/lua/hidemevpn.lua
+	nice_rm "$USR_LIB_LUA_LUCI_MODEL_NETWORK_PROTO_WGHIDEMEVPN_FILE"
+	nice_rm "$USR_LIB_LUA_LUCI_MODEL_CBI_ADMIN_NETWORK_PROTO_WGHIDEMEVPN_FILE"
+	nice_rm "$USR_LIBEXEC_RPCD_LUCI_FILE"
+	nice_rm "$USR_SHARE_RPCD_ACL_FILE"
+	nice_rm "$WWW_LUCI_STATIC_RESOURCES_PROTOCOL_WGHIDEMEVPN_FILE"
+
+	rm -rf /tmp/luci-modulecache/
+	killall -q -HUP rpcd
+
+	nice_rm /etc/config/hideme
+	nice_rm /usr/sbin/hidemevpn
+
+	echo "Uninstall complete!"
+}
+
+cmd_update()
+{
+	local list
+	local luafile
+	local lualist
+	local n
+	local nlua
+	local result
+	local ret
+
+	result=$(servers_get)
+
+	ret=$?
+
+	if [ $ret -ne 0 ]
+	then
+		logger -t hidemevpn "update: ERROR: cannot fetch servers. error code: $ret"
+		return $ret
+	fi
+
+	list=$(servers_process "$result")
+
+	if [ -z "$list" ]
+	then
+		logger -t hidemevpn "update: ERROR: cannot process servers"
+		return 1
+	fi
+
+	lualist=$(echo "$list" |
+		while read name hostname id displayname
+		do
+			echo -e "\t{ \"$displayname\", \"$hostname\" },"
+		done |
+		sort)
+
+	luafile=$(mktemp -t hidemevpn.XXXXXX)
+
+	cat <<-EOF > $luafile
+		module "hidemevpn"
+		LOCATIONS = {
+		${lualist}
+		}
+	EOF
+
+	# verify generated lua file
+
+	nlua=$(cat $luafile | lua -e 'dofile();print(#hidemevpn.LOCATIONS)' 2>/dev/null)
+
+	ret=$?
+
+	if [ $ret -ne 0 ]
+	then
+		logger -t hidemevpn "update: ERROR: in generated server list"
+		nice_rm $luafile
+		return 1
+	fi
+
+	n=$(echo "$list" | wc -l)
+
+	if [ ${n} -ne ${nlua} ]
+	then
+		logger -t hidemevpn "update: ERROR: servers count do not match ($n != $nlua)"
+		nice_rm $luafile
+		return 1
+	fi
+
+	mv -f $luafile /usr/lib/lua/hidemevpn.lua
+	rm -rf /tmp/luci-modulecache/
+
+	logger -t hidemevpn "update: servers updated"
+}
+
+cmd_usage()
+{
+	cat <<-'EOF'
+		hidemevpn v1.1-alt (2023-04-14)
+
+		Hide.me VPN WireGuard support for OpenWrt devices (since 18.06+)
+
+		usage: hidemevpn <command>
+
+		commands:
+
+		install - download and install newest version
+		login - login and obtain access token
+		uninstall - uninstall script
+		update - update servers list
+
+	EOF
+}
+
+if ! is_openwrt
+then
+	echo "ERROR: This script can be used only on OpenWrt 18.06 and newer"
+	exit 1
+fi
+
+if ! check_prerequisites
+then
+	exit 1
+fi
+
+cmd="$1"
+shift
+
+case "$cmd" in
+	connect) cmd_connect "$@" ;;
+	install) cmd_install ;;
+	login) cmd_login ;;
+	monitor) cmd_monitor ;;
+	uninstall) cmd_uninstall "$*" ;;
+	update) cmd_update ;;
+	*) cmd_usage ;;
+esac
+
+exit $?

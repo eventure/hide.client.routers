@@ -27,6 +27,9 @@ Where VARIANT is one of the following values: openwrt, glinet_v3, glinet_v4 VARI
 
 Variant openwrt supports all OpenWrt 18.06 and newer devices. Variants glinet_v3 and glinet_v4 are specific to GL.iNet specific devices.
 
+There is also an additional OpenWrt variant that uses alternative API endpoint.
+For more information check section "Installation (OpenWrt alternative API endpoint)"
+
 How to connect to a device using SSH can be found on the following links:
 
 * https://openwrt.org/docs/guide-quick-start/sshadministration
@@ -47,6 +50,35 @@ Script requires following binaries to work:
 It also requires kernel module wireguard that is not installed by default on 18.06 and 19.07 and must be installed manually, package: kmod-wireguard.
 
 If any of the prerequisites missing script won't run.
+
+
+## Installation (OpenWrt alternative API endpoint)
+
+Main version of OpenWrt script uses main API endpoint.
+
+Main API endpoint is on TCP port 432 and uses RSA 8192 bit key for HTTPS (TLS).
+
+As mentioned in section "Known issues" some OpenWrt builds can have problems with 8192 bit RSA keys.
+
+In such situations it is possible to install a script with support for an alternative API endpoint.
+
+Alternative API endpoint uses TCP port 430 and EC keys (secp521r1) for HTTPS (TLS).
+
+This change may be useful for users having issues with either RSA 8192 bit keys, connecting to TCP port 432 or just prefer ECC for TLS connections.
+
+Everything else is the same as in the main script.
+
+To install OpenWrt script that uses alternative API endpoint, install it using SSH:
+
+```curl -fsSL https://raw.githubusercontent.com/eventure/hide.client.openwrt/master/openwrt/hidemevpn-alt | sh -s install```
+
+Only change in installation URL is that for an alternative API endpoint version suffix "-alt" is appended when installing.
+
+NOTE: Suffix "-alt" is valid only for OpenWrt variant.
+
+NOTE #2: After installation, script and all commands will be still available by calling "hidemevpn" command without any suffix! No "-alt" suffix!
+
+After script is installed, follow remaining instructions in section "Installation" and related sections of this document.
 
 
 ## Uninstall
@@ -119,6 +151,10 @@ OpenWrt:
 
 ```curl -fsSL https://raw.githubusercontent.com/eventure/hide.client.routers/master/openwrt/hidemevpn | sh -s install```
 
+OpenWrt (alternative API endpoint):
+
+```curl -fsSL https://raw.githubusercontent.com/eventure/hide.client.openwrt/master/openwrt/hidemevpn-alt | sh -s install```
+
 GL.iNet v3:
 
 ```curl -fsSL https://raw.githubusercontent.com/eventure/hide.client.routers/master/glinet_v3/hidemevpn | sh -s install```
@@ -162,3 +198,7 @@ To fix that issue it is needed to replace curl with one that has support for 819
 If WolfSSL is required, then it must be compiled to support 8192 bit RSA keys by increasing FP_MAX_BITS to 16384 as mentioned on the following link:
 
 https://github.com/wolfSSL/wolfssl/issues/2924#issuecomment-620030245
+
+Another way to solve this issue is to install OpenWrt variant that uses alternative API endpoint with ECC (Elliptic-curve cryptography).
+
+For more information check section "Installation (OpenWrt alternative API endpoint)"
