@@ -395,32 +395,53 @@ servers_remove()
 
 servers_add()
 {
-	list="$1"
-	group_id="$2"
-	prefix_id="$3"
-	active_hostname="$4"
+	local list=${1}
+	local group_id=${2}
+	local prefix_id=${3}
+	local active_hostname=${4}
+	local active_private_key=${5}
+	local active_public_key=${6}
+	local active_preshared_key=${7}
+	local active_end_point=${8}
+	local active_persistent_keep_alive=${9}
+	local active_address_v4=${10}
+	local active_address_v6=${11}
+	local active_dns=${12}
 
 	echo "$list" |
 		while read name hostname id
 		do
 			id=$(($prefix_id+$id))
+
 			echo "set wireguard.peer_$id=peers"
 			echo "set wireguard.peer_$id.group_id='$group_id'"
 			echo "set wireguard.peer_$id.name='$name'"
-			echo "set wireguard.peer_$id.persistent_keepalive='25'"
-			echo "set wireguard.peer_$id.address_v4='0.0.0.0'"
 			echo "set wireguard.peer_$id.listen_port='0'"
-			echo "set wireguard.peer_$id.private_key='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='"
-			echo "set wireguard.peer_$id.public_key='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='"
-			echo "set wireguard.peer_$id.end_point='$hostname:432'"
 			echo "set wireguard.peer_$id.hostname='$hostname'"
-			echo "set wireguard.peer_$id.allowed_ips='0.0.0.0/0'"
+			echo "set wireguard.peer_$id.allowed_ips='0.0.0.0/0,::/0'"
 			echo "set wireguard.peer_$id.ipv6_enable='0'"
 			echo "set wireguard.peer_$id.presharedkey_enable='1'"
 			echo "set wireguard.peer_$id.local_access='0'"
 			echo "set wireguard.peer_$id.masq='1'"
-			[ "$hostname" = "$active_hostname" ] &&
+
+			if [ "$hostname" = "$active_hostname" ]
+			then
+				echo "set wireguard.peer_$id.persistent_keepalive='$active_persistent_keep_alive'"
+				echo "set wireguard.peer_$id.address_v4='$active_address_v4'"
+				echo "set wireguard.peer_$id.address_v6='$active_address_v6'"
+				echo "set wireguard.peer_$id.private_key='$active_private_key'"
+				echo "set wireguard.peer_$id.public_key='$active_public_key'"
+				echo "set wireguard.peer_$id.end_point='$active_end_point'"
+				echo "set wireguard.peer_$id.preshared_key='$active_preshared_key'"
+				echo "set wireguard.peer_$id.dns='$active_dns'"
 				echo "set network.wgclient.config='peer_$id'"
+			else
+				echo "set wireguard.peer_$id.persistent_keepalive='20'"
+				echo "set wireguard.peer_$id.address_v4='0.0.0.0'"
+				echo "set wireguard.peer_$id.private_key='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='"
+				echo "set wireguard.peer_$id.public_key='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA='"
+				echo "set wireguard.peer_$id.end_point='$hostname:432'"
+			fi
 		done |
 		uci -q batch
 
@@ -705,11 +726,20 @@ cmd_update()
 	local active_hostname
 	local active_peer
 	local active_peer_group_id
+	local active_private_key
+	local active_public_key
+	local active_preshared_key
+	local active_end_point
+	local active_persistent_keep_alive
+	local active_address_v4
+	local active_address_v6
+	local active_dns
 	local domain
 	local list
 	local group_id
 	local prefix_id
 	local ret
+	local result
 
 	result=$(servers_get)
 
@@ -746,21 +776,35 @@ cmd_update()
 
 	if [ "$active_peer_group_id" = "$group_id" ]
 	then
-		hostname=$(uci -q get wireguard.$active_peer.hostname)
+		active_hostname=$(uci -q get wireguard.$active_peer.hostname)
 
-		[ -z "$hostname" ] &&
-			hostname=$(uci -q get wireguard.$active_peer.end_point | cut -d: -f1)
+		[ -z "$active_hostname" ] &&
+			active_hostname=$(uci -q get wireguard.$active_peer.end_point | cut -d: -f1)
 
-		domain=$(echo $hostname | cut -d. -f2-)
+		domain=$(echo $active_hostname | cut -d. -f2-)
 
-		[ "$domain" != "hideservers.net" ] && hostname=""
+		[ "$domain" != "hideservers.net" ] && active_hostname=""
+
+		if [ -n "$active_hostname" ]
+		then
+			active_private_key=$(uci -q get wireguard.$active_peer.private_key)
+			active_public_key=$(uci -q get wireguard.$active_peer.public_key)
+			active_preshared_key=$(uci -q get wireguard.$active_peer.preshared_key)
+			active_end_point=$(uci -q get wireguard.$active_peer.end_point)
+			active_persistent_keep_alive=$(uci -q get wireguard.$active_peer.persistent_keepalive)
+			active_address_v4=$(uci -q get wireguard.$active_peer.address_v4)
+			active_address_v6=$(uci -q get wireguard.$active_peer.address_v6)
+			active_dns=$(uci -q get wireguard.$active_peer.dns)
+		fi
 	fi
 
 	list=$(servers_process "$result")
 
 	servers_remove $group_id
 
-	servers_add "$list" "$group_id" "$prefix_id" "$hostname"
+	servers_add "$list" "$group_id" "$prefix_id" "$active_hostname" \
+		"$active_private_key" "$active_public_key" "$active_preshared_key" "$active_end_point" \
+		"$active_persistent_keep_alive" "$active_address_v4" "$active_address_v6" "$active_dns"
 
 	logger -t hidemevpn "update: servers updated"
 }
@@ -768,7 +812,7 @@ cmd_update()
 cmd_usage()
 {
 	cat <<-'EOF'
-		hidemevpn v1.3 (2022-11-30)
+		hidemevpn v1.4 (2023-04-27)
 
 		Hide.me VPN WireGuard support for GL.iNet devices with firmware v4
 
