@@ -52,6 +52,27 @@ It also requires kernel module wireguard that is not installed by default on 18.
 If any of the prerequisites missing script won't run.
 
 
+## Installation on OpenWrt 23.05
+
+Since OpenWrt 23.05 LuCI is based on ucode and does not use lua anymore by default.
+
+As hidemevpn script requires lua, some additional prerequisites are needed.
+
+It is necessary to install two additional packages, lua and luci-lib-jsonc, and make directory /usr/libexec/rpcd.
+
+That can be done using following commands:
+
+```
+opkg update
+opkg install lua luci-lib-jsonc
+mkdir -p /usr/libexec/rpcd
+```
+
+If script was already installed, there is no need to uninstall it first.
+
+It is enough to repeat installation process mentioned in section "Installation".
+
+
 ## Installation (OpenWrt alternative API endpoint)
 
 Main version of OpenWrt script uses main API endpoint.
