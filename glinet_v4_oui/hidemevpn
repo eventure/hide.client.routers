@@ -1,0 +1,424 @@
+#!/bin/sh
+
+. /lib/functions.sh
+. /usr/share/libubox/jshn.sh
+
+scriptversion="2.0.0"
+scriptdate="2025-05-06"
+scriptfullpath="/usr/sbin/hidemevpn"
+osversionmin="4"
+useragentvariant=GLINET
+
+get_user_agent()
+{
+	echo "HIDE.ME.${useragentvariant:=OPENWRT}-${1:=0.0}${2:+-$2}"
+}
+
+req_api()
+{
+	[ -z "$1" ] && return 3
+
+	result=$(curl \
+		-sf \
+		--max-time 5 \
+		${useragent:+-A $useragent} \
+		--pinnedpubkey 'sha256//wFV2S+sEzTsi5WsueDIqm7xgu398q4prPQ/4EHARDLc=' \
+		https://api.hide.me/$1)
+
+	ret=$?
+
+	echo "$result"
+
+	return $ret
+}
+
+req()
+{
+	certtemp=$(mktemp -t hidemevpn.XXXXXX)
+
+	cat <<-'EOF' > $certtemp
+		-----BEGIN CERTIFICATE-----
+		MIIKJDCCBgygAwIBAgIQVc9ekKx5ZIkHcGchmaaVEzANBgkqhkiG9w0BAQ0FADCB
+		kTELMAkGA1UEBhMCTVkxHDAaBgNVBAgME1dpbGF5YWggUGVyc2VrdXR1YW4xDzAN
+		BgNVBAcMBkxhYnVhbjEZMBcGA1UECgwQZVZlbnR1cmUgTGltaXRlZDEeMBwGA1UE
+		CwwVQ2VydGlmaWNhdGUgQXV0aG9yaXR5MRgwFgYDVQQDDA9IaWRlLk1lIFJvb3Qg
+		Q0EwHhcNMTYwMTE3MjExMDI0WhcNNDYwMTA5MjExMDI0WjCBkTELMAkGA1UEBhMC
+		TVkxHDAaBgNVBAgME1dpbGF5YWggUGVyc2VrdXR1YW4xDzANBgNVBAcMBkxhYnVh
+		bjEZMBcGA1UECgwQZVZlbnR1cmUgTGltaXRlZDEeMBwGA1UECwwVQ2VydGlmaWNh
+		dGUgQXV0aG9yaXR5MRgwFgYDVQQDDA9IaWRlLk1lIFJvb3QgQ0EwggQiMA0GCSqG
+		SIb3DQEBAQUAA4IEDwAwggQKAoIEAQDX8zVTP6FQ4gJ+4e06bxvxifNHK8ht0RZn
+		zCNrrwkekpB4ojXDghNfS38oK80RfygC8LXN7SnLv+0xw5dRZ3QVIZJnd/DtX2EF
+		ZVxMyccJkLj8IEZv4Yx7zPnKI9EcQwo64O7npz28JZAGwexmK1W7ohm9VaAAtUPY
+		6Ej7k/wsJi2d5BeHzYRrfJX3nEft8hbotwsFLPsngDciS3yE2B5zH/PJOZ5uzr/5
+		djAbeFktfHR6ywbxE2CYjz2pVUfqvzjzwNj5BJPp3K5iTL/oL1xrAkQ5xSPtHbP0
+		ZCMmR//PC73cqkI6bAw8YAjvq0CG7wSC3rCfzgz3RGGPHMVUmB+GGu1KZoGisexm
+		9Y3ovmgubM+eE23aMBObf6tcRp1hSv7+EenlqAbyqQ5JqltWgsjEcV6THRKFmlSS
+		CP84kZK+nLnoto6MEG8sK9d02+iYWPQbVQ9X7O6pMHgVj7vnOLuW6i+hKT/pcsnU
+		8yhu2495Q07NDAAeX12dMbHhfLAs+DMtxjkj9SxejCS3Gi/XxON0E1NVVNEcl4yu
+		TODIJVfh/+uDdUn6v8tP7XmIFlKlfyQzfxND/VlRAep1Tt4i04KAhW0SG5/qaXoP
+		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
+		K127pRfgZn0=
+		-----END CERTIFICATE-----
+	EOF
+
+	[ -n "$5" ] && ip route add $5
+
+	result=$(curl \
+		-sf \
+		--max-time 5 \
+		${useragent:+-A $useragent} \
+		--cacert $certtemp \
+		-X POST \
+		--data-binary "$3" \
+		${4:+--resolve $1:432:$4} \
+		https://$1:432/v1.0.0/$2)
+
+	ret=$?
+
+	rm -f $certtemp
+
+	[ -n "$5" ] && ip route del $5
+
+	echo "$result"
+
+	return $ret
+}
+
+req_accesstoken()
+{
+	[ -z "$1" -o -z "$2" ] && return 1
+
+	hostname=$1
+	host=$(echo $hostname | cut -d. -f1)
+
+	json_init
+	json_add_string domain "hide.me"
+	json_add_string host "$host"
+
+	if [ -z "$3" ]
+	then
+		accesstoken="$2"
+		json_add_string accessToken "$accesstoken"
+	else
+		username="$2"
+		password="$3"
+		json_add_string username "$username"
+		json_add_string password "$password"
+	fi
+
+	token=$(req $hostname accessToken "$(json_dump)" "$4" "$5")
+
+	ret=$?
+
+	echo $token | tr -d \"
+
+	return $ret
+}
+
+req_connect()
+{
+	[ -z "$1" -o -z "$2" -o -z "$3" ] && return 1
+
+	hostname=$1
+	host=$(echo $hostname | cut -d. -f1)
+
+	accesstoken=$2
+	publickey=$3
+
+	json_init
+	json_add_string domain "hide.me"
+	json_add_string host "$host"
+	json_add_string accessToken "$accesstoken"
+	json_add_string publicKey "$publickey"
+
+	result=$(req $hostname connect "$(json_dump)" "$4" "$5")
+
+	ret=$?
+
+	echo $result
+
+	return $ret
+}
+
+servers_get()
+{
+	lang=${1:-en}
+	result=$(req_api v1/network/paid/$lang)
+
+	ret=$?
+
+	[ $ret -ne 0 ] && return $ret
+
+	echo '{"servers":'$result'}'
+
+	return $ret
+}
+
+cmd_connect()
+{
+	local name
+	local hostname
+	local host
+	local domain
+	local ipaddr
+
+	peer=$1
+
+	config_load wireguard
+
+	config_get endpoint $peer end_point
+
+	hostname=$(echo $endpoint | cut -d: -f1)
+
+	[ -z "$hostname" ] && return 1
+
+	host=$(echo $hostname | cut -d. -f1)
+	domain=$(echo $hostname | cut -d. -f2-)
+
+	[ "$domain" != "hideservers.net" ] && return 0
+
+	accesstoken=$(uci_get hideme vpn accesstoken)
+
+	if [ -z "$accesstoken" ]
+	then
+		logger -t hidemevpn "no access token available. unable to connect. please login."
+		return 1
+	fi
+
+	privatekey=$(wg genkey)
+	publickey=$(echo $privatekey | wg pubkey)
+
+	[ -z "$privatekey" ] && return 1
+	[ -z "$publickey" ] && return 1
+
+	result=$(req_connect "$hostname" "$accesstoken" "$publickey" "$ipaddr" "$route")
+
+	ret=$?
+
+	if [ $ret -ne 0 ]
+	then
+		logger -t hidemevpn "cannot connect: Error code: $ret"
+
+		[ $ret -ne 22 ] && return 1
+
+		token=$(req_accesstoken "$hostname" "$accesstoken" "" "$ipaddr" "$route")
+
+		ret=$?
+
+		if [ "$ret" != "0" -o -z "$token" ]
+		then
+			logger -t hidemevpn "cannot obtain access token! error code: $ret"
+			if [ "$ret" -eq 22 ]
+			then
+				store_accesstoken ""
+				logger -t hidemevpn "invalid accesstoken removed. please login again."
+			fi
+			return 1
+		fi
+
+		store_accesstoken "$token"
+
+		logger -t hidemevpn "new access token obtained"
+
+		result=$(req_connect "$hostname" "$token" "$publickey" "$ipaddr" "$route")
+
+		ret=$?
+
+		if [ $ret -ne 0 ]
+		then
+			logger -t hidemevpn "cannot connect! error code: $ret"
+			return 1
+		fi
+	fi
+
+	json_load "$result"
+
+	json_get_var publickey publicKey
+	json_get_var presharedkey presharedKey
+	json_get_var persistentkeepalive persistentKeepalive
+	json_get_var sessiontoken sessionToken
+
+	json_select endpoint
+	json_get_var serveraddress IP
+	json_get_var serverport Port
+	json_select ..
+
+	json_select allowedIps
+	json_get_var ipv4 1
+	json_get_var ipv6 2
+	json_select ..
+
+	json_select DNS
+	json_get_var dnsv4 1
+	json_get_var dnsv6 2
+	json_select ..
+
+	# normalize to seconds
+	persistentkeepalive=${persistentkeepalive%%000000000}
+
+	[ -z "$publickey" ] && return 1
+	[ -z "$presharedkey" ] && return 1
+	[ -z "$persistentkeepalive" ] && return 1
+	[ -z "$sessiontoken" ] && return 1
+	[ -z "$serveraddress" ] && return 1
+	[ -z "$serverport" ] && return 1
+	[ -z "$ipv4" ] && return 1
+	[ -z "$ipv6" ] && return 1
+	[ -z "$dnsv4" ] && return 1
+	[ -z "$dnsv6" ] && return 1
+
+	uci -q batch <<-EOF
+		set wireguard.$peer.private_key="$privatekey"
+		set wireguard.$peer.public_key="$publickey"
+		set wireguard.$peer.preshared_key="$presharedkey"
+		set wireguard.$peer.presharedkey_enable="1"
+		set wireguard.$peer.end_point_ip="$serveraddress:$serverport"
+		set wireguard.$peer.persistent_keepalive="$persistentkeepalive"
+		set wireguard.$peer.address_v4="$ipv4"
+		set wireguard.$peer.address_v6="$ipv6"
+		set wireguard.$peer.listen_port="0"
+		set wireguard.$peer.allowed_ips='0.0.0.0/0,::/0'
+		set wireguard.$peer.dns="$dnsv4,$dnsv6"
+		set hideme.vpn.lastpeer="$publickey"
+EOF
+
+	uci -q commit wireguard
+	uci -q commit hideme
+
+	logger -t hidemevpn "session token: $sessiontoken"
+}
+
+cmd_login()
+{
+	local username="$1"
+	local password="$2"
+	local server=${3:-any.hideservers.net}
+
+	token=$(req_accesstoken "$server" "$username" "$password")
+
+	ret=$?
+
+	echo $token
+
+	return $ret
+}
+
+cmd_update()
+{
+	local active_end_point
+	local active_peer
+	local active_peer_group_id
+	local active_private_key
+	local active_public_key
+	local active_preshared_key
+	local active_end_point_ip
+	local active_persistent_keepalive
+	local active_address_v4
+	local active_address_v6
+	local active_dns
+	local domain
+	local list
+	local group_id
+	local prefix_id
+	local ret
+	local result
+
+	result=$(servers_get)
+
+	ret=$?
+	[ $ret -ne 0 ] && return $ret
+
+	group=$(uci -q get wireguard.group_$1)
+
+	ret=$?
+	[ $ret -ne 0 ] && return $ret
+
+	[ "$group" != "groups" ] && return 99
+
+	prefix_id=$(get_peer_prefix_id)
+
+	ret=$?
+
+	[ $ret -ne 0 ] && return $ret
+
+	active_peer=$(uci -q get network.wgclient.config)
+	active_peer_group_id=$(uci -q get wireguard.$active_peer.group_id)
+
+	if [ "$active_peer_group_id" = "$group_id" ]
+	then
+		active_end_point=$(uci -q get wireguard.$active_peer.end_point)
+
+		domain=$(echo $active_end_point | cut -d: -f1 | cut -d. -f2-)
+
+		[ "$domain" != "hideservers.net" ] && active_end_point=""
+
+		if [ -n "$active_end_point" ]
+		then
+			active_private_key=$(uci -q get wireguard.$active_peer.private_key)
+			active_public_key=$(uci -q get wireguard.$active_peer.public_key)
+			active_preshared_key=$(uci -q get wireguard.$active_peer.preshared_key)
+			active_end_point_ip=$(uci -q get wireguard.$active_peer.end_point_ip)
+			active_persistent_keepalive=$(uci -q get wireguard.$active_peer.persistent_keepalive)
+			active_address_v4=$(uci -q get wireguard.$active_peer.address_v4)
+			active_address_v6=$(uci -q get wireguard.$active_peer.address_v6)
+			active_dns=$(uci -q get wireguard.$active_peer.dns)
+		fi
+	fi
+
+	list=$(servers_process "$result")
+
+	servers_remove $group_id
+
+	servers_add "$list" "$group_id" "$prefix_id" "$active_end_point" \
+		"$active_private_key" "$active_public_key" "$active_preshared_key" "$active_end_point_ip" \
+		"$active_persistent_keepalive" "$active_address_v4" "$active_address_v6" "$active_dns"
+}
+
+useragent=$(get_user_agent ${scriptversion} ${osversion})
+
+cmd="$1"
+shift
+
+case "$cmd" in
+	connect) cmd_connect "$@" ;;
+	login) cmd_login "$@" ;;
+	servers) servers_get "$@" ;;
+	*) exit 127 ;;
+esac
+
+exit $?
