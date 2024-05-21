@@ -3,8 +3,8 @@
 . /lib/functions.sh
 . /usr/share/libubox/jshn.sh
 
-scriptversion="2.0.0"
-scriptdate="2025-05-06"
+scriptversion="2.0.1"
+scriptdate="2024-05-21"
 scriptfullpath="/usr/sbin/hidemevpn"
 osversionmin="4"
 useragentvariant=GLINET
@@ -189,6 +189,20 @@ servers_get()
 	return $ret
 }
 
+store_accesstoken()
+{
+	token="$1"
+
+	[ ! -f /etc/config/hideme ] && touch /etc/config/hideme
+
+	uci -q batch <<-EOF
+		set hideme.vpn=hideme
+		set hideme.vpn.accesstoken="$token"
+	EOF
+
+	uci -q commit hideme
+}
+
 cmd_connect()
 {
 	local name
@@ -336,77 +350,6 @@ cmd_login()
 	echo $token
 
 	return $ret
-}
-
-cmd_update()
-{
-	local active_end_point
-	local active_peer
-	local active_peer_group_id
-	local active_private_key
-	local active_public_key
-	local active_preshared_key
-	local active_end_point_ip
-	local active_persistent_keepalive
-	local active_address_v4
-	local active_address_v6
-	local active_dns
-	local domain
-	local list
-	local group_id
-	local prefix_id
-	local ret
-	local result
-
-	result=$(servers_get)
-
-	ret=$?
-	[ $ret -ne 0 ] && return $ret
-
-	group=$(uci -q get wireguard.group_$1)
-
-	ret=$?
-	[ $ret -ne 0 ] && return $ret
-
-	[ "$group" != "groups" ] && return 99
-
-	prefix_id=$(get_peer_prefix_id)
-
-	ret=$?
-
-	[ $ret -ne 0 ] && return $ret
-
-	active_peer=$(uci -q get network.wgclient.config)
-	active_peer_group_id=$(uci -q get wireguard.$active_peer.group_id)
-
-	if [ "$active_peer_group_id" = "$group_id" ]
-	then
-		active_end_point=$(uci -q get wireguard.$active_peer.end_point)
-
-		domain=$(echo $active_end_point | cut -d: -f1 | cut -d. -f2-)
-
-		[ "$domain" != "hideservers.net" ] && active_end_point=""
-
-		if [ -n "$active_end_point" ]
-		then
-			active_private_key=$(uci -q get wireguard.$active_peer.private_key)
-			active_public_key=$(uci -q get wireguard.$active_peer.public_key)
-			active_preshared_key=$(uci -q get wireguard.$active_peer.preshared_key)
-			active_end_point_ip=$(uci -q get wireguard.$active_peer.end_point_ip)
-			active_persistent_keepalive=$(uci -q get wireguard.$active_peer.persistent_keepalive)
-			active_address_v4=$(uci -q get wireguard.$active_peer.address_v4)
-			active_address_v6=$(uci -q get wireguard.$active_peer.address_v6)
-			active_dns=$(uci -q get wireguard.$active_peer.dns)
-		fi
-	fi
-
-	list=$(servers_process "$result")
-
-	servers_remove $group_id
-
-	servers_add "$list" "$group_id" "$prefix_id" "$active_end_point" \
-		"$active_private_key" "$active_public_key" "$active_preshared_key" "$active_end_point_ip" \
-		"$active_persistent_keepalive" "$active_address_v4" "$active_address_v6" "$active_dns"
 }
 
 useragent=$(get_user_agent ${scriptversion} ${osversion})
